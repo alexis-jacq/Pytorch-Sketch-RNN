@@ -67,7 +67,7 @@ def normalize(strokes):
         data.append(seq)
     return data
 
-dataset = np.load(hp.data_location)
+dataset = np.load(hp.data_location, encoding='latin1')
 data = dataset['train']
 data = purify(data)
 data = normalize(data)
