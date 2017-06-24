@@ -27,7 +27,7 @@ class HParams():
         self.lr = 0.0001
         self.grad_clip = 1.
         self.temperature = 0.4
-        self.max_seq_length = 100
+        self.max_seq_length = 200
 
 hp = HParams()
 
@@ -230,7 +230,7 @@ class Model():
         else:
             sos = Variable(torch.stack([torch.Tensor([0,0,1,0,0])]\
                 *hp.batch_size)).unsqueeze(0)
-        # had sos at the begining of the batch:
+        # add sos at the begining of the batch:
         batch_init = torch.cat([sos, batch],0)
         # expend z to be ready to concatenate with inputs:
         z_stack = torch.stack([z]*(Nmax+1))
