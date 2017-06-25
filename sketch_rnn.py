@@ -14,20 +14,22 @@ use_cuda = torch.cuda.is_available()
 class HParams():
     def __init__(self):
         self.data_location = 'cat.npz'
-        self.enc_hidden_size = 512
+        self.enc_hidden_size = 256
         self.dec_hidden_size = 512
         self.Nz = 128
         self.M = 20
         self.dropout = 0.9
         self.batch_size = 100
         self.eta_min = 0.01
-        self.R = 0.9999
+        self.R = 0.99995
         self.KL_min = 0.2
-        self.wKL = 1.
-        self.lr = 0.0001
+        self.wKL = 0.5
+        self.lr = 0.001
+        self.lr_decay = 0.9999
+        self.min_lr = 0.00001
         self.grad_clip = 1.
         self.temperature = 0.4
-        self.max_seq_length = 100
+        self.max_seq_length = 200
 
 hp = HParams()
 
@@ -67,7 +69,7 @@ def normalize(strokes):
         data.append(seq)
     return data
 
-dataset = np.load(hp.data_location)
+dataset = np.load(hp.data_location, encoding='latin1')
 data = dataset['train']
 data = purify(data)
 data = normalize(data)
@@ -97,6 +99,14 @@ def make_batch(batch_size):
     else:
         batch = Variable(torch.from_numpy(np.stack(strokes,1)).float())
     return batch, lengths
+
+################################ adaptive lr
+def lr_decay(optimizer):
+    """Decay learning rate by a factor of lr_decay"""
+    for param_group in optimizer.param_groups:
+        if param_group['lr']>hp.min_lr:
+            param_group['lr'] *= hp.lr_decay
+    return optimizer
 
 ################################# encoder and decoder modules
 class EncoderRNN(nn.Module):
@@ -261,8 +271,10 @@ class Model():
         # some print and save:
         if epoch%1==0:
             print('epoch',epoch,'loss',loss.data[0],'LR',LR.data[0],'LKL',LKL.data[0])
+            self.encoder_optimizer = lr_decay(self.encoder_optimizer)
+            self.decoder_optimizer = lr_decay(self.decoder_optimizer)
         if epoch%100==0:
-            self.save(epoch)
+            #self.save(epoch)
             self.conditional_generation(epoch)
 
     def bivariate_normal_pdf(self, dx, dy):
@@ -317,6 +329,7 @@ class Model():
         s = sos
         seq_x = []
         seq_y = []
+        seq_z = []
         hidden_cell = None
         for i in range(Nmax):
             input = torch.cat([s,z.unsqueeze(0)],2)
@@ -326,48 +339,20 @@ class Model():
                     self.decoder(input, z, hidden_cell)
             hidden_cell = (hidden, cell)
             # sample from parameters:
-            s, dx, dy, eos = self.sample_next_state()
-            #----- for reconstruction:
-            '''
-            s = Variable(batch.data[i,:]).view(1,1,-1)
-            if use_cuda:
-                s = s.cuda()
-            '''
+            s, dx, dy, pen_down, eos = self.sample_next_state()
             #------
             seq_x.append(dx)
             seq_y.append(dy)
+            seq_z.append(pen_down)
             if eos:
                 print(i)
                 break
         # visualize result:
         x_sample = np.cumsum(seq_x, 0)
         y_sample = np.cumsum(seq_y, 0)
-        _,dx,dy,p = self.make_target(batch, lengths)
-        x = torch.cumsum(dx.data, 0).squeeze().cpu().numpy()
-        y = torch.cumsum(dy.data, 0).squeeze().cpu().numpy()
-        #'''
-        plt.figure()
-        plt.plot(x,-y,"*k")
-        plt.plot(x,-y,"g")
-        canvas = plt.get_current_fig_manager().canvas
-        canvas.draw()
-        pil_image = PIL.Image.frombytes('RGB', canvas.get_width_height(),
-                     canvas.tostring_rgb())
-        name = str(epoch)+'_targt.jpg'
-        pil_image.save(name,"JPEG")
-        plt.close("all")
-        #'''
-        plt.figure()
-        plt.plot(x_sample,-y_sample,"*k")
-        plt.plot(x_sample,-y_sample,"y")
-        canvas = plt.get_current_fig_manager().canvas
-        canvas.draw()
-        pil_image = PIL.Image.frombytes('RGB', canvas.get_width_height(),
-                     canvas.tostring_rgb())
-        name = str(epoch)+'.jpg'
-        pil_image.save(name,"JPEG")
-        plt.close("all")
-
+        z_sample = np.array(seq_z)
+        sequence = np.stack([x_sample,y_sample,z_sample]).T
+        make_image(sequence, epoch)
 
     def sample_next_state(self):
 
@@ -396,11 +381,11 @@ class Model():
         next_state = torch.zeros(5)
         next_state[0] = x
         next_state[1] = y
-        next_state[q_idx+1] = 1
+        next_state[q_idx+2] = 1
         if use_cuda:
-            return Variable(next_state.cuda()).view(1,1,-1),x,y,q_idx==2
+            return Variable(next_state.cuda()).view(1,1,-1),x,y,q_idx==1,q_idx==2
         else:
-            return Variable(next_state).view(1,1,-1),x,y,q_idx==2
+            return Variable(next_state).view(1,1,-1),x,y,q_idx==1,q_idx==2
 
 def sample_bivariate_normal(mu_x,mu_y,sigma_x,sigma_y,rho_xy, greedy=False):
     # inputs must be floats
@@ -414,12 +399,28 @@ def sample_bivariate_normal(mu_x,mu_y,sigma_x,sigma_y,rho_xy, greedy=False):
     x = np.random.multivariate_normal(mean, cov, 1)
     return x[0][0], x[0][1]
 
+def make_image(sequence, epoch, name='_output_'):
+    """plot drawing with separated strokes"""
+    strokes = np.split(sequence, np.where(sequence[:,2]>0)[0]+1)
+    fig = plt.figure()
+    ax1 = fig.add_subplot(111)
+    for s in strokes:
+        plt.plot(s[:,0],-s[:,1])
+    canvas = plt.get_current_fig_manager().canvas
+    canvas.draw()
+    pil_image = PIL.Image.frombytes('RGB', canvas.get_width_height(),
+                 canvas.tostring_rgb())
+    name = str(epoch)+name+'.jpg'
+    pil_image.save(name,"JPEG")
+    plt.close("all")
+
 if __name__=="__main__":
     model = Model()
     for epoch in range(50001):
         model.train(epoch)
 
     '''
-    model.load('encoderRNN_sel_0.700573_epoch_500.pth','decoderRNN_sel_0.700573_epoch_500.pth')
+    model.load('encoder.pth','decoder.pth')
     model.conditional_generation(0)
     #'''
+
