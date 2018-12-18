@@ -183,12 +183,12 @@ class DecoderRNN(nn.Module):
             len_out = Nmax+1
         else:
             len_out = 1
-        pi = F.softmax(pi.t().squeeze()).view(len_out,-1,hp.M)
-        sigma_x = torch.exp(sigma_x.t().squeeze()).view(len_out,-1,hp.M)
-        sigma_y = torch.exp(sigma_y.t().squeeze()).view(len_out,-1,hp.M)
-        rho_xy = torch.tanh(rho_xy.t().squeeze()).view(len_out,-1,hp.M)
-        mu_x = mu_x.t().squeeze().contiguous().view(len_out,-1,hp.M)
-        mu_y = mu_y.t().squeeze().contiguous().view(len_out,-1,hp.M)
+        pi = F.softmax(pi.squeeze().t()).view(len_out,-1,hp.M)
+        sigma_x = torch.exp(sigma_x.squeeze().t()).view(len_out,-1,hp.M)
+        sigma_y = torch.exp(sigma_y.squeeze().t()).view(len_out,-1,hp.M)
+        rho_xy = torch.tanh(rho_xy.squeeze().t()).view(len_out,-1,hp.M)
+        mu_x = mu_x.squeeze().t().contiguous().view(len_out,-1,hp.M)
+        mu_y = mu_y.squeeze().t().contiguous().view(len_out,-1,hp.M)
         q = F.softmax(params_pen).view(len_out,-1,3)
         return pi,mu_x,mu_y,sigma_x,sigma_y,rho_xy,q,hidden,cell
 
