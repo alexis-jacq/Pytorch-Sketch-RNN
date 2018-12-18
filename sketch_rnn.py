@@ -4,7 +4,6 @@ import PIL
 
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
 from torch import optim
 import torch.nn.functional as F
 
@@ -43,7 +42,7 @@ def purify(strokes):
     """removes to small or too long sequences + removes large gaps"""
     data = []
     for seq in strokes:
-        if len(seq[:,0]) <= hp.max_seq_length and len(seq[:,0])>10:
+        if seq.shape[0] <= hp.max_seq_length and seq.shape[0] > 10:
             seq = np.minimum(seq, 1000)
             seq = np.maximum(seq, -1000)
             seq = np.array(seq, dtype=np.float32)
@@ -125,11 +124,11 @@ class EncoderRNN(nn.Module):
         if hidden_cell is None:
             # then must init with zeros
             if use_cuda:
-                hidden = Variable(torch.zeros(2, batch_size, hp.enc_hidden_size).cuda())
-                cell = Variable(torch.zeros(2, batch_size, hp.enc_hidden_size).cuda())
+                hidden = torch.zeros(2, batch_size, hp.enc_hidden_size).cuda()
+                cell = torch.zeros(2, batch_size, hp.enc_hidden_size.cuda()
             else:
-                hidden = Variable(torch.zeros(2, batch_size, hp.enc_hidden_size))
-                cell = Variable(torch.zeros(2, batch_size, hp.enc_hidden_size))
+                hidden = torch.zeros(2, batch_size, hp.enc_hidden_size)
+                cell = torch.zeros(2, batch_size, hp.enc_hidden_size)
             hidden_cell = (hidden, cell)
         _, (hidden,cell) = self.lstm(inputs.float(), hidden_cell)
         # hidden is (2, batch_size, hidden_size), we want (batch_size, 2*hidden_size):
@@ -142,9 +141,9 @@ class EncoderRNN(nn.Module):
         # N ~ N(0,1)
         z_size = mu.size()
         if use_cuda:
-            N = Variable(torch.normal(torch.zeros(z_size),torch.ones(z_size)).cuda())
+            N = torch.normal(torch.zeros(z_size),torch.ones(z_size)).cuda()
         else:
-            N = Variable(torch.normal(torch.zeros(z_size),torch.ones(z_size)))
+            N = torch.normal(torch.zeros(z_size),torch.ones(z_size))
         z = mu + sigma*N
         # mu and sigma_hat are needed for LKL loss
         return z, mu, sigma_hat
@@ -206,24 +205,20 @@ class Model():
 
     def make_target(self, batch, lengths):
         if use_cuda:
-            eos = Variable(torch.stack([torch.Tensor([0,0,0,0,1])]\
-                *batch.size()[1]).cuda()).unsqueeze(0)
+            eos = torch.stack([torch.Tensor([0,0,0,0,1])]*batch.size()[1]).cuda().unsqueeze(0)
         else:
-            eos = Variable(torch.stack([torch.Tensor([0,0,0,0,1])]\
-                *batch.size()[1])).unsqueeze(0)
+            eos = torch.stack([torch.Tensor([0,0,0,0,1])]*batch.size()[1]).unsqueeze(0)
         batch = torch.cat([batch, eos], 0)
         mask = torch.zeros(Nmax+1, batch.size()[1])
         for indice,length in enumerate(lengths):
             mask[:length,indice] = 1
         if use_cuda:
-            mask = Variable(mask.cuda()).detach()
-        else:
-            mask = Variable(mask).detach()
-        dx = torch.stack([Variable(batch.data[:,:,0])]*hp.M,2).detach()
-        dy = torch.stack([Variable(batch.data[:,:,1])]*hp.M,2).detach()
-        p1 = Variable(batch.data[:,:,2]).detach()
-        p2 = Variable(batch.data[:,:,3]).detach()
-        p3 = Variable(batch.data[:,:,4]).detach()
+            mask = mask.cuda()
+        dx = torch.stack([batch.data[:,:,0]]*hp.M,2)
+        dy = torch.stack([batch.data[:,:,1]]*hp.M,2)
+        p1 = batch.data[:,:,2]
+        p2 = batch.data[:,:,3]
+        p3 = batch.data[:,:,4]
         p = torch.stack([p1,p2,p3],2)
         return mask,dx,dy,p
 
@@ -235,11 +230,9 @@ class Model():
         z, self.mu, self.sigma = self.encoder(batch, hp.batch_size)
         # create start of sequence:
         if use_cuda:
-            sos = Variable(torch.stack([torch.Tensor([0,0,1,0,0])]\
-                *hp.batch_size).cuda()).unsqueeze(0)
+            sos = torch.stack([torch.Tensor([0,0,1,0,0])]*hp.batch_size).cuda().unsqueeze(0)
         else:
-            sos = Variable(torch.stack([torch.Tensor([0,0,1,0,0])]\
-                *hp.batch_size)).unsqueeze(0)
+            sos = torch.stack([torch.Tensor([0,0,1,0,0])]*hp.batch_size).unsqueeze(0)
         # had sos at the begining of the batch:
         batch_init = torch.cat([sos, batch],0)
         # expend z to be ready to concatenate with inputs:
