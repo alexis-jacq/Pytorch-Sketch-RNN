@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import PIL
-
 import torch
 import torch.nn as nn
 from torch import optim
@@ -17,7 +16,7 @@ class HParams():
         self.dec_hidden_size = 512
         self.Nz = 128
         self.M = 20
-        self.dropout = 0.9
+        self.dropout = 0.1
         self.batch_size = 100
         self.eta_min = 0.01
         self.R = 0.99995
@@ -112,8 +111,8 @@ class EncoderRNN(nn.Module):
     def __init__(self):
         super(EncoderRNN, self).__init__()
         # bidirectional lstm:
-        self.lstm = nn.LSTM(5, hp.enc_hidden_size, \
-            dropout=hp.dropout, bidirectional=True)
+        self.lstm = nn.LSTM(5, hp.enc_hidden_size,bidirectional=True)
+        self.dropout = nn.Dropout(hp.dropout)
         # create mu and sigma from lstm's last output:
         self.fc_mu = nn.Linear(2*hp.enc_hidden_size, hp.Nz)
         self.fc_sigma = nn.Linear(2*hp.enc_hidden_size, hp.Nz)
@@ -125,14 +124,14 @@ class EncoderRNN(nn.Module):
             # then must init with zeros
             if use_cuda:
                 hidden = torch.zeros(2, batch_size, hp.enc_hidden_size).cuda()
-                cell = torch.zeros(2, batch_size, hp.enc_hidden_size.cuda()
+                cell = torch.zeros(2, batch_size, hp.enc_hidden_size).cuda()
             else:
                 hidden = torch.zeros(2, batch_size, hp.enc_hidden_size)
                 cell = torch.zeros(2, batch_size, hp.enc_hidden_size)
             hidden_cell = (hidden, cell)
         _, (hidden,cell) = self.lstm(inputs.float(), hidden_cell)
         # hidden is (2, batch_size, hidden_size), we want (batch_size, 2*hidden_size):
-        hidden_forward, hidden_backward = torch.split(hidden,1,0)
+        hidden_forward, hidden_backward = torch.split(self.dropout(hidden),1,0)
         hidden_cat = torch.cat([hidden_forward.squeeze(0), hidden_backward.squeeze(0)],1)
         # mu and sigma:
         mu = self.fc_mu(hidden_cat)
@@ -154,7 +153,8 @@ class DecoderRNN(nn.Module):
         # to init hidden and cell from z:
         self.fc_hc = nn.Linear(hp.Nz, 2*hp.dec_hidden_size)
         # unidirectional lstm:
-        self.lstm = nn.LSTM(hp.Nz+5, hp.dec_hidden_size, dropout=hp.dropout)
+        self.lstm = nn.LSTM(hp.Nz+5, hp.dec_hidden_size)
+        self.dropout = nn.Dropout(hp.dropout)
         # create proba distribution parameters from hiddens:
         self.fc_params = nn.Linear(hp.dec_hidden_size,6*hp.M+3)
 
@@ -170,7 +170,7 @@ class DecoderRNN(nn.Module):
         if self.training:
             y = self.fc_params(outputs.view(-1, hp.dec_hidden_size))
         else:
-            y = self.fc_params(hidden.view(-1, hp.dec_hidden_size))
+            y = self.fc_params(self.dropout(hidden).view(-1, hp.dec_hidden_size))
         # separate pen and mixture params:
         params = torch.split(y,6,1)
         params_mixture = torch.stack(params[:-1]) # trajectory
@@ -182,13 +182,13 @@ class DecoderRNN(nn.Module):
             len_out = Nmax+1
         else:
             len_out = 1
-        pi = F.softmax(pi.squeeze().t()).view(len_out,-1,hp.M)
-        sigma_x = torch.exp(sigma_x.squeeze().t()).view(len_out,-1,hp.M)
-        sigma_y = torch.exp(sigma_y.squeeze().t()).view(len_out,-1,hp.M)
+        pi = F.softmax(pi.view(1,-1),dim=1).view(len_out,-1,hp.M)
+        sigma_x = torch.exp(sigma_x.squeeze()).view(len_out,-1,hp.M)
+        sigma_y = torch.exp(sigma_y.squeeze()).view(len_out,-1,hp.M)
         rho_xy = torch.tanh(rho_xy.squeeze().t()).view(len_out,-1,hp.M)
-        mu_x = mu_x.squeeze().t().contiguous().view(len_out,-1,hp.M)
-        mu_y = mu_y.squeeze().t().contiguous().view(len_out,-1,hp.M)
-        q = F.softmax(params_pen).view(len_out,-1,3)
+        mu_x = mu_x.contiguous().view(len_out,-1,hp.M)
+        mu_y = mu_y.contiguous().view(len_out,-1,hp.M)
+        q = F.softmax(params_pen,dim=1).view(len_out,-1,3)
         return pi,mu_x,mu_y,sigma_x,sigma_y,rho_xy,q,hidden,cell
 
 class Model():
@@ -263,7 +263,7 @@ class Model():
         self.decoder_optimizer.step()
         # some print and save:
         if epoch%1==0:
-            print('epoch',epoch,'loss',loss.data[0],'LR',LR.data[0],'LKL',LKL.data[0])
+            print('epoch',epoch,'loss',loss.item(),'LR',LR.item(),'LKL',LKL.item())
             self.encoder_optimizer = lr_decay(self.encoder_optimizer)
             self.decoder_optimizer = lr_decay(self.decoder_optimizer)
         if epoch%100==0:
